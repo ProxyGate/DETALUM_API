@@ -1,5 +1,9 @@
+import time
+
 import pytest
 from src.main import Catalog, Category
+from progress.bar import IncrementalBar
+
 
 catalog_names = ['lemken']
 
@@ -19,7 +23,11 @@ class TestCatalog:
         if response.status_code == 200:
             data = response.json().get('data')
             if data:
+                bar = IncrementalBar(f'{catalog.name} categories', max=len(data))
+
                 for category in data:
+                    bar.next()
+                    time.sleep(0.2)
                     validation_fields = set()
 
                     if catalog.name == 'lemken':
@@ -56,104 +64,103 @@ class TestCatalog:
                     category_id = category.get('id')
                     obj = Category(category_id=category_id)
                     catalog.categories.append(obj)
+                bar.finish()
             else:
                 assert data, f'Note Categories in {catalog.name}'
         else:
-            assert response.status_code == 200, f'Bad request {catalog.name}'
+            assert response.status_code == 200, f'Bad request {catalog.current_url}'
 
-    @pytest.mark.dependency(depends=["test_tree"])
+    @pytest.mark.dependency(name='test_category', depends=["test_tree"])
     def test_category(self, catalog):
-        for category in catalog.categories:
+        main_parts_list_ids = []
+
+        bar = IncrementalBar(f'receive categories data from {catalog.name} ', max=len(catalog.categories[-1:]))
+        for category in catalog.categories[-1:]:
+            bar.next()
+            time.sleep(0.1)
             response = catalog.get_category(category_or_children_id=category.id)
+            assert response.status_code == 200, f'Bad request catalog: {catalog.current_url}'
 
-            if response.status_code == 200:
-                data = response.json().get('data')
-                if data:
-                    for el in data:
-                        children = el.get('children')
+            data = response.json().get('data')
+            assert data, f'Note data in catalog: {catalog.name} category_id: {category.id}'
 
-                        if children:
-                            for main_child in children:
-                                children_id = main_child.get('id')
-                                response = catalog.get_category(category_or_children_id=children_id)
+            for el in data:
+                children = el.get('children')
+                assert children, f'No children in data catalog: {catalog.name} category_id: {category.id}'
 
-                                if response.status_code == 200:
-                                    data2 = response.json().get('data')
+                for child in children:
+                    child_id = child.get('id')
+                    main_parts_list_ids.append(child_id)
+        bar.finish()
 
-                                    if data2:
-                                        for el2 in data2:
-                                            children2 = el2.get('children')
+        children_parts_list_ids = []
 
-                                            if children2:
-                                                for child in children2:
-                                                    child_id = child.get('id')
-                                                    category.parts_list.append(child_id)
+        bar = IncrementalBar(f'receive parts list', max=len(main_parts_list_ids))
+        for part_list_id in main_parts_list_ids:
+            bar.next()
+            response = catalog.get_category(category_or_children_id=part_list_id)
+            assert response.status_code == 200, f'Bad request {catalog.current_url}'
 
-                                                    response = catalog.get_parts(child_id=child_id)
+            data = response.json().get('data')
+            assert data, f'Note data in catalog: {catalog.name} main_part_list_id: {part_list_id}'
 
-                                                    if response.status_code == 200:
-                                                        data3 = response.json().get('data')
+            for el in data:
+                children = el.get('children')
+                assert children, f'No children in data catalog: {catalog.name} main_part_list_id: {part_list_id}'
 
-                                                        if data3:
-                                                            for part in data3:
-                                                                part_id = part.get('id')
-                                                                category.parts.append(part_id)
-                                                        else:
-                                                            assert data3, f'Note Parts in {catalog.name} category_id: {category.id} children_id: {children_id} child_id: {child_id}'
-                                                    else:
-                                                        assert response.status_code == 200, f'Bad request in {catalog.name} category_id: {category.id} child_id_id(part list): {child_id}'
-                                            else:
-                                                assert children2, f'No children2(Parts list) in {catalog.name} category_id: {category.id} children_id: {children_id}'
-                                    else:
-                                        assert data2, f'Note Children Data in {catalog.name} category_id: {category.id} children_id: {children_id}'
-                        else:
-                            assert children, f'No children in {catalog.name} category_id: {category.id} data'
-                else:
-                    assert data, f'Note Category Data in {catalog.name} category_id: {category.id}'
-            else:
-                assert response.status_code == 200, f'Bad request {catalog.name} category_id: {category.id}'
+                for child in children:
+                    child_id = child.get('id')
+                    children_parts_list_ids.append(child_id)
+        bar.finish()
+
+        bar = IncrementalBar(f'receive parts from parts list', max=len(children_parts_list_ids))
+        for part_list_id in children_parts_list_ids:
+            bar.next()
+            response = catalog.get_parts(child_id=part_list_id)
+            assert response.status_code == 200, f'Bad request {catalog.current_url}'
+
+            data = response.json().get('data')
+            assert data, f'Note Parts in {catalog.name} part_list_id: {part_list_id}'
+
+            for part in data:
+                part_id = part.get('id')
+                catalog.parts.append(part_id)
+
+        bar.finish()
 
     @pytest.mark.dependency(depends=["test_category"])
     def test_part(self, catalog):
-        for category in catalog.categories:
-            for part_id in category.parts:
-                response = catalog.get_part(part_id=part_id)
+        bar = IncrementalBar(f'check fields in detail', max=len(catalog.parts))
+        for part_id in catalog.parts:
+            bar.next()
+            response = catalog.get_part(part_id=part_id)
+            assert response.status_code == 200, f'Bad request {catalog.current_url}'
 
-                if response.status_code == 200:
-                    data = response.json().get('data')
-                    part_category = response.json().get('category')
+            data = response.json().get('data')
+            assert data, f'Note data_field in {catalog.name} Part_id: {part_id})'
 
-                    if data:
-                        validation_fields = {
-                            'id', 'name', 'link_type', 'quantity',
-                            'part_number', 'position', 'dimension',
-                            'imageFields', 'created_at', 'updated_at',
-                        }
+            validation_fields = {
+                'id', 'name', 'link_type', 'quantity',
+                'part_number', 'position', 'dimension',
+                'imageFields', 'created_at', 'updated_at',
+            }
 
-                        missing_fields = validation_fields - data.keys()
+            missing_fields = validation_fields - data.keys()
+            assert not missing_fields, f'Missing fields {missing_fields} in {catalog.name} part_id: {part_id}'
 
-                        if missing_fields:
-                            assert not missing_fields, f'Missing fields {missing_fields} in {catalog.name} category_id: {category.id} part_id: {part_id}'
-                        else:
-                            image_fields = data.get('imageFields')
+            image_fields = data.get('imageFields')
+            assert image_fields, f'Not Image_fields in {catalog.name} art_id: {part_id}'
 
-                            if image_fields:
-                                validation_image_fields = {'name', 's3'}
-                                image_missing_fields = validation_image_fields - image_fields.keys()
+            validation_image_fields = {'name', 's3'}
 
-                                assert not image_missing_fields, f'Missing fields  {image_missing_fields} in imageFields => in {catalog.name} category_id: {category.id} part_id: {part_id}'
-                            else:
-                                assert image_fields, f'Not Image_fields in {catalog.name} category_id: {category.id} part_id: {part_id}'
-                    else:
-                        assert data, f'Note data_field in {catalog.name} category_id: {category.id} Part_id: {part_id})'
+            image_missing_fields = validation_image_fields - image_fields.keys()
+            assert not image_missing_fields, f'Missing fields  {image_missing_fields} in imageFields => in {catalog.name} part_id: {part_id}'
 
-                    if part_category:
-                        validation_fields = {'id'}
-                        missing_fields = validation_fields - part_category.keys()
+            part_category = response.json().get('category')
+            assert part_category, f'Note category_field in {catalog.name} Part_id: {part_id})'
 
-                        assert not missing_fields, f'Missing fields {missing_fields} in {catalog.name} category_id: {category.id} part_id: {part_id}'
-                    else:
-                        assert part_category, f'Note category_field in {catalog.name} category_id: {category.id} Part_id: {part_id})'
+            validation_fields = {'id'}
+            missing_fields = validation_fields - part_category.keys()
 
-                else:
-                    assert response.status_code == 200, f'Bad request {catalog.name} category_id: {category.id} part_id: {part_id}'
+            assert not missing_fields, f'Missing fields {missing_fields} in {catalog.name} part_id: {part_id}'
+        bar.finish()
